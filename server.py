@@ -187,6 +187,21 @@ def mjpeg_frame_generator(overlay: bool = True):
 async def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
+@app.get("/sw.js")
+async def service_worker():
+    return FileResponse(
+        os.path.join(STATIC_DIR, "sw.js"),
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/"}
+    )
+
+@app.get("/manifest.json")
+async def web_manifest():
+    return FileResponse(
+        os.path.join(STATIC_DIR, "manifest.json"),
+        media_type="application/manifest+json"
+    )
+
 @app.get("/stream/live")
 async def live_stream(overlay: bool = Query(True)):
     """MJPEG live video stream endpoint"""

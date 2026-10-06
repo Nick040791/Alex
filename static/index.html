@@ -2,10 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Ring IP Cam Dashboard | Tailscale Security</title>
-  <link rel="stylesheet" href="/static/css/style.css">
+  
+  <!-- PWA & Mobile Meta Tags -->
+  <meta name="theme-color" content="#0b0f19">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%2300a8ff' stroke-width='10'/><circle cx='50' cy='50' r='18' fill='%2300a8ff'/></svg>">
+  
+  <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
 
@@ -14,182 +22,225 @@
     <div class="logo-group">
       <div class="ring-icon" title="Ring Cam System"></div>
       <div class="logo-text">
-        <h1>Ring Cam <span class="device-badge">K12 E Row (Tablet)</span></h1>
+        <h1>Ring Cam <span class="device-badge">Tablet</span></h1>
       </div>
     </div>
 
+    <!-- Status Indicators (Adaptive on Mobile) -->
     <div class="header-status">
       <div class="status-pill">
         <span class="status-dot" id="statusDot"></span>
         <span id="statusText">Connecting</span>
       </div>
-      <div class="tailscale-tag" title="Accessible on Tailscale network">
-        Tailscale: 100.105.4.70
+      <div class="tailscale-tag desktop-only" title="Tailscale IP of Tablet">
+        Tablet: 100.105.4.70
       </div>
-      <div class="status-pill" id="viewersCount">
+      <div class="status-pill desktop-only" id="viewersCount">
         1 watching
       </div>
     </div>
 
+    <!-- Header Action Buttons -->
     <div class="header-actions">
-      <button class="btn-icon" title="Ring Doorbell Chime" onclick="triggerChime()">
-        🔔
+      <!-- Device Push Notification Toggle Button -->
+      <button class="btn-icon" id="btnNotification" title="Enable Mobile & Device Notifications" onclick="toggleNotifications()">
+        <span id="notifIcon">🔔</span>
+        <span class="notification-indicator" id="notifIndicator"></span>
+      </button>
+
+      <button class="btn-icon" title="Play Ring Doorbell Chime" onclick="triggerChime()">
+        🛎️
       </button>
       <button class="btn-icon" title="Settings" onclick="openSettings()">
         ⚙️
       </button>
-      <button class="btn-icon" title="Fullscreen" onclick="toggleFullscreen()">
+      <button class="btn-icon desktop-only" title="Fullscreen" onclick="toggleFullscreen()">
         ⛶
       </button>
     </div>
   </header>
 
+  <!-- Mobile Segmented Navigation Tabs (Hidden on Desktop) -->
+  <nav class="mobile-nav-bar" id="mobileNavBar">
+    <button class="mob-tab active" id="tabLive" onclick="switchMobileTab('live')">
+      📹 Camera
+    </button>
+    <button class="mob-tab" id="tabTuning" onclick="switchMobileTab('tuning')">
+      🎯 Motion
+    </button>
+    <button class="mob-tab" id="tabActivity" onclick="switchMobileTab('activity')">
+      📜 Activity <span class="mob-badge" id="mobEventBadge">0</span>
+    </button>
+  </nav>
+
+  <!-- Notification Banner Callout (Prompt user on first mobile visit) -->
+  <div class="notification-banner" id="notifBanner" style="display: none;">
+    <div class="notif-banner-content">
+      <span>🔔 <strong>Get Motion Alerts on this Device:</strong> Enable system notifications & vibration when motion is detected.</span>
+      <div class="notif-banner-actions">
+        <button class="btn-small btn-banner-enable" onclick="enableNotificationsFromBanner()">Enable</button>
+        <button class="btn-small" onclick="dismissNotifBanner()">Later</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Main Dashboard Grid -->
   <main class="dashboard-grid">
     
-    <!-- Left Column: Video and Motion Controls -->
-    <div class="left-column">
-      <section class="camera-card">
-      <div class="video-container" id="videoContainer">
-        
-        <!-- Live Video Feed Image (MJPEG) -->
-        <img id="videoFeed" class="video-feed" src="/stream/live?overlay=true" alt="Camera Stream" />
+    <!-- Left Column: Video Feed and Motion Tuning -->
+    <div class="left-column" id="colLeft">
+      
+      <!-- Video Card -->
+      <section class="camera-card" id="sectionVideo">
+        <div class="video-container" id="videoContainer">
+          
+          <!-- Live Video Feed Image (MJPEG) -->
+          <img id="videoFeed" class="video-feed" src="/stream/live?overlay=true" alt="Camera Stream" />
 
-        <!-- Top Video Overlays -->
-        <div class="overlay-top">
-          <div class="live-badge">
-            <span class="live-pulse"></span>
-            LIVE
+          <!-- Top Video Overlays -->
+          <div class="overlay-top">
+            <div class="live-badge">
+              <span class="live-pulse"></span>
+              LIVE
+            </div>
+            <div class="fullscreen-mob-btn" onclick="toggleFullscreen()" title="Fullscreen">
+              ⛶
+            </div>
+          </div>
+
+          <!-- Motion Alert Banner -->
+          <div class="motion-alert-banner" id="motionBanner">
+            ⚠️ MOTION DETECTED
+          </div>
+
+        </div>
+
+        <!-- Quick Action HUD Controls -->
+        <div class="hud-controls">
+          <div class="hud-grid">
+            <button class="hud-btn btn-chime" onclick="triggerChime()" title="Play Ring doorbell sound">
+              🛎️ Chime
+            </button>
+            <button class="hud-btn btn-snapshot" id="btnSnapshot" onclick="takeSnapshot()" title="Capture full resolution image">
+              📸 Snapshot
+            </button>
+            <button class="hud-btn" id="btnFlashlight" onclick="triggerFlashlight()" title="Toggle tablet flashlight">
+              🔦 Spotlight
+            </button>
+            <button class="hud-btn" id="btnSwitchCam" onclick="switchCamera()" title="Switch Front/Back camera">
+              🔄 Flip Cam
+            </button>
+            <button class="hud-btn" onclick="rotateCamera()" title="Rotate feed 90 degrees">
+              ↷ Rotate
+            </button>
+            <button class="hud-btn active" id="btnOverlay" onclick="toggleOverlay()" title="Toggle motion detection bounding boxes">
+              🔲 Boxes: ON
+            </button>
           </div>
         </div>
 
-        <!-- Motion Alert Banner -->
-        <div class="motion-alert-banner" id="motionBanner">
-          ⚠️ MOTION DETECTED
-        </div>
-
-      </div>
-
-      <!-- Quick Action HUD Controls -->
-      <div class="hud-controls">
-        <div class="hud-buttons">
-          <button class="hud-btn btn-chime" onclick="triggerChime()" title="Play Ring doorbell sound">
-            🔔 Ring Chime
-          </button>
-          <button class="hud-btn btn-snapshot" id="btnSnapshot" onclick="takeSnapshot()" title="Capture full resolution image">
-            📸 Snapshot
-          </button>
-          <button class="hud-btn" id="btnFlashlight" onclick="triggerFlashlight()" title="Toggle tablet flashlight">
-            🔦 Spotlight
-          </button>
-          <button class="hud-btn" id="btnSwitchCam" onclick="switchCamera()" title="Switch Front/Back camera">
-            🔄 Flip Cam
-          </button>
-          <button class="hud-btn" onclick="rotateCamera()" title="Rotate feed 90 degrees">
-            ↷ Rotate
-          </button>
-          <button class="hud-btn active" id="btnOverlay" onclick="toggleOverlay()" title="Toggle motion detection bounding boxes">
-            🔲 Motion Boxes: ON
-          </button>
-        </div>
-      </div>
-
-      <!-- Live Video Telemetry Status Bar -->
-      <div class="telemetry-bar">
-        <div class="telemetry-item">
-          <span>Target:</span>
-          <strong id="telemetryHost">100.105.4.70:8080</strong>
-        </div>
-        <div class="telemetry-item">
-          <span>Ping:</span>
-          <strong id="telemetryPing">Checking...</strong>
-        </div>
-        <div class="telemetry-item">
-          <span>Stream:</span>
-          <strong id="telemetryStream">MJPEG</strong>
-        </div>
-        <div class="telemetry-item">
-          <span>Active Camera:</span>
-          <strong id="telemetryCamera">BACK</strong>
-        </div>
-        <div class="telemetry-item">
-          <span>Motion Score:</span>
-          <strong id="telemetryMotionScore">0%</strong>
-        </div>
-      </div>
-    </section>
-
-    <!-- Live Motion Detection & Sensitivity Tuning Card -->
-    <section class="motion-tuning-card">
-      <div class="motion-tuning-header">
-        <div class="tuning-title">
-          <h3>🎯 Live Motion Detection & Sensitivity</h3>
-          <span class="tuning-state-badge" id="motionStatusBadge">IDLE</span>
-        </div>
-        <label class="switch-toggle" title="Toggle Motion Detection On/Off">
-          <input type="checkbox" id="quickMotionToggle" checked onchange="toggleMotionDetection(this.checked)" />
-          <span class="slider-round"></span>
-        </label>
-      </div>
-
-      <!-- Live Motion Energy Gauge -->
-      <div class="meter-container">
-        <div class="meter-labels">
-          <span>Live Motion Level: <strong id="liveMeterValue">0.0%</strong></span>
-          <span>Trigger Threshold: <strong id="liveThresholdValue">2.0%</strong></span>
-        </div>
-        <div class="meter-track">
-          <div class="meter-fill" id="meterFill" style="width: 0%;"></div>
-          <div class="meter-threshold-line" id="meterThresholdLine" style="left: 20%;" title="Trigger Threshold Line"></div>
-        </div>
-      </div>
-
-      <!-- Sensitivity Slider & Presets -->
-      <div class="sensitivity-controls-row">
-        <div class="sensitivity-slider-block">
-          <div class="slider-meta">
-            <label>Sensitivity: <strong id="liveSensitivityLabel">60%</strong></label>
-            <span class="sub-label" id="sensitivityDesc">Balanced (Human Detection)</span>
+        <!-- Live Video Telemetry Micro-Grid -->
+        <div class="telemetry-bar">
+          <div class="telemetry-item">
+            <span class="telem-label">Target</span>
+            <strong id="telemetryHost">100.105.4.70</strong>
           </div>
-          <input type="range" id="liveSensitivitySlider" min="5" max="95" value="60" class="tuning-slider" oninput="onLiveSensitivityInput(this.value)" />
+          <div class="telemetry-item">
+            <span class="telem-label">Ping</span>
+            <strong id="telemetryPing">Checking...</strong>
+          </div>
+          <div class="telemetry-item">
+            <span class="telem-label">Stream</span>
+            <strong id="telemetryStream">MJPEG</strong>
+          </div>
+          <div class="telemetry-item">
+            <span class="telem-label">Camera</span>
+            <strong id="telemetryCamera">BACK</strong>
+          </div>
+          <div class="telemetry-item">
+            <span class="telem-label">Motion Score</span>
+            <strong id="telemetryMotionScore">0.0%</strong>
+          </div>
+        </div>
+      </section>
+
+      <!-- Live Motion Detection & Sensitivity Tuning Card -->
+      <section class="motion-tuning-card" id="sectionTuning">
+        <div class="motion-tuning-header">
+          <div class="tuning-title">
+            <h3>🎯 Motion Detection Tuning</h3>
+            <span class="tuning-state-badge" id="motionStatusBadge">MONITORING</span>
+          </div>
+          <label class="switch-toggle" title="Toggle Motion Detection On/Off">
+            <input type="checkbox" id="quickMotionToggle" checked onchange="toggleMotionDetection(this.checked)" />
+            <span class="slider-round"></span>
+          </label>
         </div>
 
-        <!-- Quick Sensitivity Presets -->
-        <div class="preset-buttons">
-          <button class="preset-btn" id="presetLow" onclick="applyPreset(35)">Low (35%)</button>
-          <button class="preset-btn active" id="presetMed" onclick="applyPreset(60)">Medium (60%)</button>
-          <button class="preset-btn" id="presetHigh" onclick="applyPreset(80)">High (80%)</button>
-          <button class="preset-btn" id="presetMax" onclick="applyPreset(95)">Max (95%)</button>
-        </div>
-      </div>
-
-      <!-- Zone & Cooldown Row -->
-      <div class="tuning-sub-row">
-        <div class="zone-selector">
-          <label>Detection Zone:</label>
-          <div class="btn-group">
-            <button class="zone-btn active" id="zoneAll" onclick="setZone('all')">📐 Full Frame</button>
-            <button class="zone-btn" id="zoneBottom" onclick="setZone('bottom')">🚪 Lower 60%</button>
-            <button class="zone-btn" id="zoneCenter" onclick="setZone('center')">🎯 Center</button>
+        <!-- Live Motion Energy Gauge -->
+        <div class="meter-container">
+          <div class="meter-labels">
+            <span>Live Motion: <strong id="liveMeterValue">0.0%</strong></span>
+            <span>Trigger Threshold: <strong id="liveThresholdValue">1.8%</strong></span>
+          </div>
+          <div class="meter-track">
+            <div class="meter-fill" id="meterFill" style="width: 0%;"></div>
+            <div class="meter-threshold-line" id="meterThresholdLine" style="left: 30%;" title="Trigger Line"></div>
           </div>
         </div>
 
-        <div class="cooldown-selector">
-          <label>Event Cooldown:</label>
-          <select id="quickCooldown" class="select-dropdown" onchange="setCooldown(this.value)">
-            <option value="2">2 seconds</option>
-            <option value="4">4 seconds</option>
-            <option value="6" selected>6 seconds</option>
-            <option value="10">10 seconds</option>
-            <option value="20">20 seconds</option>
-          </select>
+        <!-- Sensitivity Slider & Presets -->
+        <div class="sensitivity-controls-row">
+          <div class="sensitivity-slider-block">
+            <div class="slider-meta">
+              <label>Sensitivity: <strong id="liveSensitivityLabel">60%</strong></label>
+              <span class="sub-label" id="sensitivityDesc">Balanced (Human Detection)</span>
+            </div>
+            <input type="range" id="liveSensitivitySlider" min="5" max="95" value="60" class="tuning-slider" oninput="onLiveSensitivityInput(this.value)" />
+          </div>
+
+          <!-- Quick Sensitivity Presets -->
+          <div class="preset-buttons">
+            <button class="preset-btn" id="presetLow" onclick="applyPreset(35)">Low (35%)</button>
+            <button class="preset-btn active" id="presetMed" onclick="applyPreset(60)">Medium (60%)</button>
+            <button class="preset-btn" id="presetHigh" onclick="applyPreset(80)">High (80%)</button>
+            <button class="preset-btn" id="presetMax" onclick="applyPreset(95)">Max (95%)</button>
+          </div>
         </div>
-      </div>
-    </section>
-  </div> <!-- Wrap left section -->
-    
-  <!-- Right Column: Ring Activity History -->
-  <aside class="activity-card">
+
+        <!-- Zone & Cooldown Row -->
+        <div class="tuning-sub-row">
+          <div class="zone-selector">
+            <label>Zone:</label>
+            <div class="btn-group">
+              <button class="zone-btn active" id="zoneAll" onclick="setZone('all')">Full View</button>
+              <button class="zone-btn" id="zoneBottom" onclick="setZone('bottom')">Lower 60%</button>
+              <button class="zone-btn" id="zoneCenter" onclick="setZone('center')">Center</button>
+            </div>
+          </div>
+
+          <div class="cooldown-selector">
+            <label>Cooldown:</label>
+            <select id="quickCooldown" class="select-dropdown" onchange="setCooldown(this.value)">
+              <option value="2">2s</option>
+              <option value="4">4s</option>
+              <option value="6" selected>6s</option>
+              <option value="10">10s</option>
+              <option value="20">20s</option>
+            </select>
+          </div>
+
+          <!-- Test Notification Button -->
+          <button class="btn-small btn-test-notif" onclick="sendTestNotification()" title="Send a test notification to this device">
+            📲 Test Alert
+          </button>
+        </div>
+      </section>
+
+    </div> <!-- End left-column -->
+
+    <!-- Right Column: Ring Activity History -->
+    <aside class="activity-card" id="sectionActivity">
       <div class="activity-header">
         <h2>
           Activity Feed
@@ -224,12 +275,12 @@
         <div class="lightbox-img-wrapper">
           <img id="lightboxImg" src="" alt="Capture Preview" />
         </div>
-        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem; color: var(--text-secondary);">
-          <div>
+        <div class="lightbox-footer">
+          <div class="lightbox-meta">
             <div id="lightboxTime" style="font-weight: 600; color: #fff;"></div>
-            <div id="lightboxScore" style="margin-top: 4px;"></div>
+            <div id="lightboxScore" style="margin-top: 4px; font-size: 0.85rem; color: var(--text-secondary);"></div>
           </div>
-          <div style="display: flex; gap: 10px;">
+          <div class="lightbox-actions">
             <a id="lightboxDownload" href="#" download="ring_capture.jpg" class="btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
               💾 Download
             </a>
@@ -278,21 +329,17 @@
         <div class="form-group">
           <label class="form-label">
             <span>Motion Sensitivity</span>
-            <span id="valSensitivity" style="color: var(--ring-blue);">25</span>
+            <span id="valSensitivity" style="color: var(--ring-blue);">60</span>
           </label>
-          <input type="range" id="cfgSensitivity" class="range-slider" min="5" max="90" value="25" />
-          <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;">
-            <span>High Sensitivity (subtle motion)</span>
-            <span>Low Sensitivity (major motion)</span>
-          </div>
+          <input type="range" id="cfgSensitivity" class="range-slider" min="5" max="95" value="60" />
         </div>
 
         <div class="form-group">
           <label class="form-label">
             <span>Minimum Motion Area</span>
-            <span id="valMinArea" style="color: var(--ring-blue);">1800 px</span>
+            <span id="valMinArea" style="color: var(--ring-blue);">1200 px</span>
           </label>
-          <input type="range" id="cfgMinArea" class="range-slider" min="500" max="15000" step="250" value="1800" />
+          <input type="range" id="cfgMinArea" class="range-slider" min="300" max="10000" step="100" value="1200" />
         </div>
 
         <div class="form-group">
@@ -315,7 +362,10 @@
           <span style="font-size: 0.9rem; font-weight: 600;">Play Ring Chime On Motion Alerts</span>
         </label>
 
-        <div style="margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--border-color);">
+        <div style="margin-top: 18px;">
+          <button type="button" class="btn-primary" style="width: 100%; margin-bottom: 10px;" onclick="toggleNotifications()">
+            🔔 Toggle Device Push Notifications
+          </button>
           <button type="button" class="btn-secondary" style="width: 100%;" onclick="resetCameraService()">
             ⚠️ Reset Tablet Camera Service
           </button>
@@ -328,6 +378,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Toast Notification Alert -->
+  <div id="toast" class="toast"></div>
 
   <script src="/static/js/app.js"></script>
 </body>

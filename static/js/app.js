@@ -2,9 +2,10 @@
 let ws = null;
 let audioCtx = null;
 let soundAlertsEnabled = true;
-let desktopNotificationsEnabled = false;
+let deviceNotificationsEnabled = false;
 let overlayEnabled = true;
 let currentEventInModal = null;
+let serviceWorkerRegistration = null;
 
 // Initialize Web Audio Context on user interaction
 function getAudioContext() {
@@ -81,17 +82,191 @@ function playShutterSound() {
   osc.stop(now + 0.09);
 }
 
-// Desktop notification
-function showDesktopNotification(title, body) {
-  if (desktopNotificationsEnabled && "Notification" in window && Notification.permission === "granted") {
-    new Notification(title, {
-      body: body,
-      icon: "/static/favicon.ico"
-    });
+// Device Vibration helper (supported on Android/mobile browsers)
+function triggerDeviceVibration(pattern = [250, 100, 250]) {
+  if (navigator.vibrate) {
+    try {
+      navigator.vibrate(pattern);
+    } catch (e) {
+      // Ignore vibration error if restricted
+    }
   }
 }
 
-// Connect WebSocket
+// Toast Alert Popup
+let toastTimer = null;
+function showToast(message, duration = 3000) {
+  const toast = document.getElementById("toast");
+  if (!toast) return;
+  toast.innerHTML = message;
+  toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toast.classList.remove("show");
+  }, duration);
+}
+
+// ============================================================
+// DEVICE PUSH & BROWSER NOTIFICATIONS
+// ============================================================
+
+// Register Service Worker for PWA & Background Alerts
+async function initServiceWorker() {
+  if ('serviceWorker' in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      serviceWorkerRegistration = reg;
+      console.log('Ring Cam Service Worker active with scope:', reg.scope);
+    } catch (err) {
+      console.warn('Service Worker registration failed:', err);
+    }
+  }
+  updateNotificationIndicator();
+}
+
+function updateNotificationIndicator() {
+  const indicator = document.getElementById("notifIndicator");
+  const icon = document.getElementById("notifIcon");
+  const banner = document.getElementById("notifBanner");
+
+  if (!("Notification" in window)) {
+    if (indicator) indicator.style.display = "none";
+    return;
+  }
+
+  if (Notification.permission === "granted") {
+    deviceNotificationsEnabled = true;
+    if (indicator) {
+      indicator.classList.add("enabled");
+      indicator.title = "Device alerts enabled";
+    }
+    if (icon) icon.innerText = "🔔";
+    if (banner) banner.style.display = "none";
+  } else if (Notification.permission === "denied") {
+    deviceNotificationsEnabled = false;
+    if (indicator) {
+      indicator.classList.remove("enabled");
+      indicator.title = "Notifications blocked in browser";
+    }
+    if (icon) icon.innerText = "🔕";
+    if (banner) banner.style.display = "none";
+  } else {
+    // "default" - unprompted
+    deviceNotificationsEnabled = false;
+    if (indicator) {
+      indicator.classList.remove("enabled");
+      indicator.title = "Click to enable device alerts";
+    }
+    if (icon) icon.innerText = "🔔";
+    // Check if user dismissed previously in this session
+    if (banner && !sessionStorage.getItem("notif_banner_dismissed")) {
+      banner.style.display = "block";
+    }
+  }
+}
+
+async function toggleNotifications() {
+  if (!("Notification" in window)) {
+    showToast("⚠️ Web notifications are not supported in this browser.");
+    return;
+  }
+
+  if (Notification.permission === "granted") {
+    showToast("✅ Device notifications are already active!");
+    sendTestNotification();
+    return;
+  }
+
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission === "granted") {
+      deviceNotificationsEnabled = true;
+      triggerDeviceVibration([150, 80, 150]);
+      updateNotificationIndicator();
+      showToast("🔔 Device alerts enabled! You will receive system notifications on motion.");
+      
+      // Send welcome test notification
+      sendDeviceNotification("Ring Cam Alert Enabled", "You will now receive notifications when motion is detected.", null);
+    } else {
+      updateNotificationIndicator();
+      showToast("⚠️ Notifications were blocked. Enable them in your browser site settings.");
+    }
+  } catch (err) {
+    console.error("Permission error", err);
+  }
+}
+
+function enableNotificationsFromBanner() {
+  dismissNotifBanner();
+  toggleNotifications();
+}
+
+function dismissNotifBanner() {
+  const banner = document.getElementById("notifBanner");
+  if (banner) banner.style.display = "none";
+  sessionStorage.setItem("notif_banner_dismissed", "1");
+}
+
+// Send system notification to mobile device / desktop
+function sendDeviceNotification(title, body, imageUrl) {
+  if (!("Notification" in window) || Notification.permission !== "granted") {
+    return;
+  }
+
+  // Vibrate mobile device
+  triggerDeviceVibration([250, 100, 250]);
+
+  const notifOptions = {
+    body: body,
+    icon: '/static/icon-192.png',
+    badge: '/static/icon-192.png',
+    tag: 'ring-motion-alert',
+    renotify: true,
+    vibrate: [250, 100, 250],
+    data: { url: '/' }
+  };
+
+  if (imageUrl) {
+    notifOptions.image = imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`;
+  }
+
+  // Priority 1: Use active Service Worker (enables rich notifications & action buttons on mobile)
+  if (serviceWorkerRegistration && serviceWorkerRegistration.showNotification) {
+    serviceWorkerRegistration.showNotification(title, notifOptions).catch(() => {
+      // Fallback
+      new Notification(title, notifOptions);
+    });
+  } else if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({
+      type: 'SHOW_NOTIFICATION',
+      title: title,
+      options: notifOptions
+    });
+  } else {
+    // Fallback: Standard browser Notification
+    try {
+      new Notification(title, notifOptions);
+    } catch (e) {
+      console.warn("Notification error", e);
+    }
+  }
+}
+
+function sendTestNotification() {
+  if (Notification.permission !== "granted") {
+    toggleNotifications();
+    return;
+  }
+  getAudioContext();
+  playRingChime();
+  sendDeviceNotification("Ring Cam Test Alert", "Motion detection alerts are functioning properly on this device!", null);
+  showToast("📲 Test alert sent to your device!");
+}
+
+// ============================================================
+// WEBSOCKET COMMUNICATION
+// ============================================================
+
 function connectWebSocket() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const wsUrl = `${protocol}//${window.location.host}/ws`;
@@ -126,28 +301,39 @@ function handleWsMessage(msg) {
     case "motion_status":
       updateMotionMeter(msg.motion_score, msg.trigger_threshold, msg.motion_detected);
       if (msg.active_viewers !== undefined) {
-        document.getElementById("viewersCount").innerText = `${msg.active_viewers} watching`;
+        const vElem = document.getElementById("viewersCount");
+        if (vElem) vElem.innerText = `${msg.active_viewers} watching`;
       }
       break;
 
     case "motion_event":
       // Flash banner
       triggerMotionBanner();
-      // Play Ring Chime
+      // Play Ring Chime audio
       playRingChime();
-      // Push notification
-      showDesktopNotification("Ring Cam Alert", `Motion detected at ${msg.event.datetime_str}`);
+      // Vibrate mobile device
+      triggerDeviceVibration([300, 150, 300]);
+      // Trigger system device notification with snapshot preview
+      sendDeviceNotification(
+        "⚠️ Ring Cam: Motion Detected",
+        `Motion detected at ${msg.event.datetime_str}`,
+        msg.event.annotated_path || msg.event.image_path
+      );
       // Prepend to activity feed
       prependActivityItem(msg.event);
       break;
 
     case "snapshot_taken":
       playShutterSound();
+      triggerDeviceVibration([80]);
       prependActivityItem(msg.event);
+      showToast("📸 Snapshot captured!");
       break;
 
     case "ring_chime":
       playRingChime();
+      triggerDeviceVibration([200, 100, 200]);
+      showToast("🛎️ Doorbell Chime!");
       break;
 
     case "event_deleted":
@@ -159,12 +345,8 @@ function handleWsMessage(msg) {
       break;
 
     case "settings_updated":
-      if (msg.sensitivity !== undefined) {
-        updateSensitivityUI(msg.sensitivity);
-      }
-      if (msg.zone !== undefined) {
-        updateZoneUI(msg.zone);
-      }
+      if (msg.sensitivity !== undefined) updateSensitivityUI(msg.sensitivity);
+      if (msg.zone !== undefined) updateZoneUI(msg.zone);
       break;
 
     case "control_action":
@@ -184,13 +366,13 @@ function updateMotionMeter(score, threshold, isTriggered) {
   const statusBadge = document.getElementById("motionStatusBadge");
 
   const safeScore = score || 0.0;
-  const safeThresh = threshold || 2.0;
+  const safeThresh = threshold || 1.8;
 
   if (scoreElem) scoreElem.innerText = `${safeScore.toFixed(1)}%`;
   if (liveVal) liveVal.innerText = `${safeScore.toFixed(1)}%`;
   if (threshVal) threshVal.innerText = `${safeThresh.toFixed(1)}%`;
 
-  // Scale meter between 0% and max(6.0%, threshold * 2.2)
+  // Scale meter dynamically
   const maxScale = Math.max(6.0, safeThresh * 2.2);
   const fillPct = Math.min(100, Math.max(0, (safeScore / maxScale) * 100));
   const linePct = Math.min(100, Math.max(2, (safeThresh / maxScale) * 100));
@@ -235,7 +417,10 @@ function triggerMotionBanner() {
   }, 4000);
 }
 
-// Live Motion Tuning Controller
+// ============================================================
+// SENSITIVITY & MOTION SETTINGS
+// ============================================================
+
 let motionSaveTimeout = null;
 
 function saveMotionSettingsDebounced(payload) {
@@ -308,6 +493,9 @@ function toggleMotionDetection(enabled) {
   if (!enabled && badge) {
     badge.innerText = "DISABLED";
     badge.classList.remove("triggered");
+    showToast("Motion detection paused");
+  } else if (enabled) {
+    showToast("Motion detection active");
   }
 }
 
@@ -328,16 +516,83 @@ async function loadLiveMotionSettings() {
   }
 }
 
-// Activity Feed Rendering
+// ============================================================
+// MOBILE NAVIGATION CONTROLLER
+// ============================================================
+
+function switchMobileTab(tab) {
+  const isMobile = window.innerWidth <= 768;
+  document.querySelectorAll(".mob-tab").forEach(t => t.classList.remove("active"));
+
+  const tabElem = document.getElementById(`tab${tab.charAt(0).toUpperCase() + tab.slice(1)}`);
+  if (tabElem) tabElem.classList.add("active");
+
+  const secVideo = document.getElementById("sectionVideo");
+  const secTuning = document.getElementById("sectionTuning");
+  const secActivity = document.getElementById("sectionActivity");
+
+  if (!isMobile) {
+    // Desktop: all visible
+    if (secVideo) secVideo.style.display = "flex";
+    if (secTuning) secTuning.style.display = "flex";
+    if (secActivity) secActivity.style.display = "flex";
+    return;
+  }
+
+  // Mobile mode: show chosen section or smooth scroll
+  if (tab === "live") {
+    if (secVideo) {
+      secVideo.style.display = "flex";
+      secVideo.scrollIntoView({ behavior: 'smooth' });
+    }
+    if (secTuning) secTuning.style.display = "flex";
+    if (secActivity) secActivity.style.display = "none";
+  } else if (tab === "tuning") {
+    if (secVideo) secVideo.style.display = "flex";
+    if (secTuning) {
+      secTuning.style.display = "flex";
+      secTuning.scrollIntoView({ behavior: 'smooth' });
+    }
+    if (secActivity) secActivity.style.display = "none";
+  } else if (tab === "activity") {
+    if (secVideo) secVideo.style.display = "none";
+    if (secTuning) secTuning.style.display = "none";
+    if (secActivity) {
+      secActivity.style.display = "flex";
+      secActivity.scrollIntoView({ behavior: 'smooth' });
+    }
+  }
+}
+
+// Reset view on window resize
+window.addEventListener("resize", () => {
+  if (window.innerWidth > 768) {
+    const secVideo = document.getElementById("sectionVideo");
+    const secTuning = document.getElementById("sectionTuning");
+    const secActivity = document.getElementById("sectionActivity");
+    if (secVideo) secVideo.style.display = "flex";
+    if (secTuning) secTuning.style.display = "flex";
+    if (secActivity) secActivity.style.display = "flex";
+  }
+});
+
+// ============================================================
+// ACTIVITY FEED RENDERING
+// ============================================================
+
 async function loadEvents() {
   try {
     const res = await fetch("/api/events?limit=40");
     const data = await res.json();
     const list = document.getElementById("activityList");
     const countBadge = document.getElementById("eventCountBadge");
+    const mobBadge = document.getElementById("mobEventBadge");
 
-    countBadge.innerText = data.events.length;
-    if (data.events.length === 0) {
+    const total = data.events.length;
+    if (countBadge) countBadge.innerText = total;
+    if (mobBadge) mobBadge.innerText = total;
+
+    if (total === 0) {
       list.innerHTML = `<div class="empty-state">No motion events recorded yet. When movement is detected, snapshots will appear here.</div>`;
       return;
     }
@@ -391,15 +646,20 @@ function prependActivityItem(ev) {
   list.insertBefore(item, list.firstChild);
 
   const countBadge = document.getElementById("eventCountBadge");
-  countBadge.innerText = parseInt(countBadge.innerText || "0") + 1;
+  const mobBadge = document.getElementById("mobEventBadge");
+  const newCount = parseInt(countBadge.innerText || "0") + 1;
+  if (countBadge) countBadge.innerText = newCount;
+  if (mobBadge) mobBadge.innerText = newCount;
 }
 
 function removeActivityItem(id) {
   const item = document.getElementById(`event-${id}`);
   if (item) item.remove();
   const countBadge = document.getElementById("eventCountBadge");
+  const mobBadge = document.getElementById("mobEventBadge");
   const count = Math.max(0, parseInt(countBadge.innerText || "1") - 1);
-  countBadge.innerText = count;
+  if (countBadge) countBadge.innerText = count;
+  if (mobBadge) mobBadge.innerText = count;
 }
 
 async function deleteEvent(id) {
@@ -409,6 +669,7 @@ async function deleteEvent(id) {
     if (currentEventInModal && currentEventInModal.id === id) {
       closeModal("lightboxModal");
     }
+    showToast("Event deleted");
   } catch (e) {
     console.error("Delete failed", e);
   }
@@ -419,13 +680,17 @@ async function clearAllEvents() {
     try {
       await fetch("/api/events", { method: "DELETE" });
       loadEvents();
+      showToast("Activity history cleared");
     } catch (e) {
       console.error("Clear failed", e);
     }
   }
 }
 
-// Lightbox Modal
+// ============================================================
+// LIGHTBOX MODAL
+// ============================================================
+
 function openLightbox(ev) {
   currentEventInModal = ev;
   const modal = document.getElementById("lightboxModal");
@@ -451,29 +716,41 @@ function deleteCurrentLightboxEvent() {
   }
 }
 
-// Telemetry Poller
+// ============================================================
+// TELEMETRY & HARDWARE CONTROLS
+// ============================================================
+
 async function fetchTelemetry() {
   try {
     const res = await fetch("/api/status");
     const data = await res.json();
 
-    document.getElementById("telemetryHost").innerText = `${data.tablet_host}:${data.tablet_http_port}`;
-    document.getElementById("telemetryStream").innerText = (data.stream_type || "mjpeg").toUpperCase();
+    const hostElem = document.getElementById("telemetryHost");
+    if (hostElem) hostElem.innerText = data.tablet_host;
+    
+    const streamElem = document.getElementById("telemetryStream");
+    if (streamElem) streamElem.innerText = (data.stream_type || "mjpeg").toUpperCase();
     
     const pingElem = document.getElementById("telemetryPing");
-    pingElem.innerText = data.ping_ok ? "Reachable" : "Unreachable";
-    pingElem.style.color = data.ping_ok ? "var(--ring-success)" : "var(--ring-alert)";
+    if (pingElem) {
+      pingElem.innerText = data.ping_ok ? "OK" : "DOWN";
+      pingElem.style.color = data.ping_ok ? "var(--ring-success)" : "var(--ring-alert)";
+    }
 
     if (data.remote_status) {
       const activeCam = data.remote_status.camera || "Back";
-      document.getElementById("telemetryCamera").innerText = activeCam.toUpperCase();
+      const camElem = document.getElementById("telemetryCamera");
+      if (camElem) camElem.innerText = activeCam.toUpperCase();
       
       const flashBtn = document.getElementById("btnFlashlight");
-      if (data.remote_status.flashlight) {
-        flashBtn.classList.add("active");
-        flashBtn.innerHTML = `🔦 Spotlight ON`;
-      } else {
-        flashBtn.classList.remove("active");
+      if (flashBtn) {
+        if (data.remote_status.flashlight) {
+          flashBtn.classList.add("active");
+          flashBtn.innerHTML = `🔦 Spotlight ON`;
+        } else {
+          flashBtn.classList.remove("active");
+          flashBtn.innerHTML = `🔦 Spotlight`;
+        }
       }
     }
   } catch (e) {
@@ -481,13 +758,12 @@ async function fetchTelemetry() {
   }
 }
 
-// Hardware & Camera Controls
 async function triggerFlashlight() {
   getAudioContext();
   try {
-    const res = await fetch("/api/control/flashlight", { method: "POST" });
-    const data = await res.json();
+    await fetch("/api/control/flashlight", { method: "POST" });
     fetchTelemetry();
+    showToast("Spotlight toggled");
   } catch (e) {
     console.error("Flashlight error", e);
   }
@@ -496,9 +772,9 @@ async function triggerFlashlight() {
 async function switchCamera() {
   getAudioContext();
   try {
-    const res = await fetch("/api/control/switch", { method: "POST" });
-    const data = await res.json();
+    await fetch("/api/control/switch", { method: "POST" });
     fetchTelemetry();
+    showToast("Camera switched");
   } catch (e) {
     console.error("Switch error", e);
   }
@@ -513,6 +789,7 @@ async function rotateCamera() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: String(currentRotation) })
     });
+    showToast(`Rotated to ${currentRotation}°`);
   } catch (e) {
     console.error("Rotate error", e);
   }
@@ -523,8 +800,10 @@ async function takeSnapshot() {
   try {
     playShutterSound();
     const btn = document.getElementById("btnSnapshot");
-    btn.style.transform = "scale(0.95)";
-    setTimeout(() => { btn.style.transform = "none"; }, 150);
+    if (btn) {
+      btn.style.transform = "scale(0.95)";
+      setTimeout(() => { btn.style.transform = "none"; }, 150);
+    }
 
     const res = await fetch("/api/snapshot?annotated=true");
     const event = await res.json();
@@ -537,9 +816,11 @@ async function takeSnapshot() {
 function triggerChime() {
   getAudioContext();
   playRingChime();
+  triggerDeviceVibration([200, 100, 200]);
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: "trigger_chime" }));
   }
+  showToast("🛎️ Ring chime sounded!");
 }
 
 function toggleOverlay() {
@@ -549,10 +830,10 @@ function toggleOverlay() {
   const btn = document.getElementById("btnOverlay");
   if (overlayEnabled) {
     btn.classList.add("active");
-    btn.innerText = "🔲 Motion Boxes: ON";
+    btn.innerText = "🔲 Boxes: ON";
   } else {
     btn.classList.remove("active");
-    btn.innerText = "🔲 Motion Boxes: OFF";
+    btn.innerText = "🔲 Boxes: OFF";
   }
 }
 
@@ -565,7 +846,10 @@ function toggleFullscreen() {
   }
 }
 
-// Settings Modal & Save
+// ============================================================
+// SETTINGS MODAL
+// ============================================================
+
 async function openSettings() {
   try {
     const res = await fetch("/api/settings");
@@ -614,6 +898,7 @@ async function saveSettings() {
     });
     closeModal("settingsModal");
     fetchTelemetry();
+    showToast("Settings saved");
   } catch (e) {
     console.error("Save settings failed", e);
   }
@@ -623,7 +908,7 @@ async function resetCameraService() {
   if (confirm("Reset the tablet camera service to clear any frozen frames?")) {
     try {
       await fetch("/api/control/reset", { method: "POST" });
-      alert("Camera reset command sent to tablet.");
+      showToast("Camera reset command dispatched");
     } catch (e) {
       console.error("Reset camera error", e);
     }
@@ -634,21 +919,12 @@ function closeModal(id) {
   document.getElementById(id).classList.remove("open");
 }
 
-// Request desktop notification permission
-function requestNotificationPermission() {
-  if ("Notification" in window && Notification.permission !== "granted") {
-    Notification.requestPermission().then((permission) => {
-      if (permission === "granted") {
-        desktopNotificationsEnabled = true;
-      }
-    });
-  } else if ("Notification" in window && Notification.permission === "granted") {
-    desktopNotificationsEnabled = true;
-  }
-}
+// ============================================================
+// APP INITIALIZATION
+// ============================================================
 
-// Initialization on load
 window.addEventListener("DOMContentLoaded", () => {
+  initServiceWorker();
   connectWebSocket();
   loadEvents();
   loadLiveMotionSettings();
@@ -665,9 +941,8 @@ window.addEventListener("DOMContentLoaded", () => {
   const cool = document.getElementById("cfgCooldown");
   if (cool) cool.oninput = (e) => document.getElementById("valCooldown").innerText = `${e.target.value}s`;
 
-  // First interaction unlocks Audio
+  // First touch / tap unlocks Web Audio & prompts notification
   document.body.addEventListener("click", () => {
     getAudioContext();
-    requestNotificationPermission();
   }, { once: true });
 });

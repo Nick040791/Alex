@@ -1,7 +1,46 @@
-__pycache__/
-*.pyc
+# Environment & Secrets
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.crt
+*.cert
+*.p12
+*.pfx
+id_rsa*
+*.secret
+secrets/
+
+# Database & Runtime Data
 events.db
-captures/*.jpg
-captures/faces/*.jpg
+*.db
+*.sqlite
+*.sqlite3
+
+# Captured Snapshots & Face Crops
+captures/*
+!captures/.gitkeep
+
+# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
 test_venv/
+env/
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
+
+# OS & Editor metadata
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

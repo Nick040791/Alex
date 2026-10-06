@@ -13,7 +13,9 @@ A full-featured Ring-like security camera system powered by an Android tablet ru
   - Automatically captures snapshots when movement is detected.
   - Relays video stream and pushes real-time WebSocket events.
   - Serves the Ring web dashboard on port `8088`.
-- **Clients**: Any device on the Tailscale network (e.g. `clientdesk`, smartphones, laptops) can access `http://100.79.108.38:8088`.
+- **Clients**: Any device on the Tailscale network (e.g. `clientdesk`, smartphones, laptops) can access:
+  - **HTTPS (Secure & PWA Ready)**: `https://serverdeskhq.tail4f9ce7.ts.net:8445`
+  - **HTTP (Direct IP)**: `http://100.79.108.38:8088`
 
 ## Features
 
@@ -54,7 +56,8 @@ A full-featured Ring-like security camera system powered by an Android tablet ru
    - Confirm it shows running on port `8080`.
 
 2. **Access the Dashboard**:
-   - From any Tailscale device: Open `http://100.79.108.38:8088` (or `http://serverdeskhq:8088`).
+   - **HTTPS (Recommended for Mobile / Notifications)**: Open **`https://serverdeskhq.tail4f9ce7.ts.net:8445`**
+   - **HTTP**: Open `http://100.79.108.38:8088`
 
 3. **Face Enrollment**:
    - **From Captured Events**: Open any event in the Activity Feed and type a name under "Name This Face" -> Click **👤 Enroll Face**.

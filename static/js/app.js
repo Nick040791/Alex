@@ -313,10 +313,14 @@ function handleWsMessage(msg) {
       playRingChime();
       // Vibrate mobile device
       triggerDeviceVibration([300, 150, 300]);
-      // Trigger system device notification with snapshot preview
+      // Trigger system device notification with snapshot preview and smart Ring AI label
+      const notifTitle = msg.event.summary_label && msg.event.summary_label !== "Motion Detected"
+        ? `⚠️ Ring Cam: ${msg.event.summary_label}`
+        : "⚠️ Ring Cam: Motion Detected";
+      const notifBody = `${msg.event.summary_label || 'Movement'} detected at ${msg.event.datetime_str}`;
       sendDeviceNotification(
-        "⚠️ Ring Cam: Motion Detected",
-        `Motion detected at ${msg.event.datetime_str}`,
+        notifTitle,
+        notifBody,
         msg.event.annotated_path || msg.event.image_path
       );
       // Prepend to activity feed
@@ -334,6 +338,19 @@ function handleWsMessage(msg) {
       playRingChime();
       triggerDeviceVibration([200, 100, 200]);
       showToast("🛎️ Doorbell Chime!");
+      break;
+
+    case "face_enrolled":
+      showToast(`👤 Face enrolled: "${msg.face.name}"`);
+      loadEnrolledFaces();
+      break;
+
+    case "face_deleted":
+      loadEnrolledFaces();
+      break;
+
+    case "ai_settings_updated":
+      loadAISettings();
       break;
 
     case "event_deleted":
@@ -621,12 +638,46 @@ function createActivityItemElem(ev) {
   const badgeText = isMotion ? `Motion ${ev.motion_score}%` : "Snapshot";
   const displayImg = ev.annotated_path || ev.image_path;
 
+  // Build AI Recognition tags
+  let aiBadgesHtml = "";
+  if (ev.faces && ev.faces.length > 0) {
+    ev.faces.forEach(f => {
+      if (f.is_known) {
+        aiBadgesHtml += `<span class="activity-badge ai-known-face">👤 ${f.name}</span>`;
+      } else {
+        aiBadgesHtml += `<span class="activity-badge ai-person">👤 Unknown Face</span>`;
+      }
+    });
+  }
+  if (ev.objects && ev.objects.length > 0) {
+    const seen = new Set();
+    ev.objects.forEach(obj => {
+      const lbl = obj.label;
+      if (!seen.has(lbl)) {
+        seen.add(lbl);
+        let cls = "ai-person";
+        if (["car", "truck", "motorcycle", "bus"].includes(lbl)) cls = "ai-vehicle";
+        else if (["dog", "cat", "bird"].includes(lbl)) cls = "ai-pet";
+        else if (["backpack", "suitcase", "handbag"].includes(lbl)) cls = "ai-package";
+        
+        // Avoid duplicate person badge if known face already displayed
+        if (lbl === "person" && ev.faces && ev.faces.some(f => f.is_known)) {
+          return;
+        }
+        aiBadgesHtml += `<span class="activity-badge ${cls}">${obj.friendly_label || lbl}</span>`;
+      }
+    });
+  } else if (ev.summary_label && ev.summary_label !== "Motion Detected" && ev.summary_label !== "Snapshot") {
+    aiBadgesHtml += `<span class="activity-badge ai-person">${ev.summary_label}</span>`;
+  }
+
   item.innerHTML = `
     <img src="/${displayImg}" class="activity-thumb" loading="lazy" alt="Event preview" />
     <div class="activity-info">
       <div class="activity-title">
         <span class="activity-badge ${badgeClass}">${badgeText}</span>
       </div>
+      ${aiBadgesHtml ? `<div class="activity-tags-row">${aiBadgesHtml}</div>` : ''}
       <div class="activity-time">${ev.datetime_str}</div>
     </div>
     <button class="btn-delete-event" title="Delete event" onclick="deleteEvent(${ev.id})">
@@ -707,7 +758,80 @@ function openLightbox(ev) {
   score.innerText = ev.event_type === "motion" ? `Motion Area: ${ev.motion_score}%` : "Manual Capture";
   downloadLink.href = `/${ev.image_path}`;
 
+  // Populate AI Recognition Details
+  const summaryElem = document.getElementById("lightboxAiSummary");
+  const countElem = document.getElementById("lightboxAiCount");
+  const detailsElem = document.getElementById("lightboxAiDetails");
+  const faceInput = document.getElementById("lightboxFaceName");
+
+  if (summaryElem) {
+    summaryElem.innerText = ev.summary_label || (ev.event_type === "motion" ? "Motion Detected" : "Snapshot");
+  }
+
+  const detailsList = [];
+  if (ev.faces && ev.faces.length > 0) {
+    ev.faces.forEach(f => {
+      const matchPct = Math.round((f.similarity || f.confidence) * 100);
+      detailsList.push(`Face: <strong>${f.name}</strong> (${matchPct}%)`);
+    });
+  }
+  if (ev.objects && ev.objects.length > 0) {
+    ev.objects.forEach(o => {
+      detailsList.push(`${o.friendly_label || o.label} (${Math.round(o.confidence * 100)}%)`);
+    });
+  }
+
+  if (countElem) {
+    const totalDetections = (ev.faces ? ev.faces.length : 0) + (ev.objects ? ev.objects.length : 0);
+    countElem.innerText = totalDetections > 0 ? `${totalDetections} identified` : "";
+  }
+
+  if (detailsElem) {
+    detailsElem.innerHTML = detailsList.length > 0 ? detailsList.join(" &nbsp;•&nbsp; ") : "No distinct faces or recognized objects identified in this frame.";
+  }
+
+  if (faceInput) {
+    faceInput.value = "";
+  }
+
   modal.classList.add("open");
+}
+
+async function enrollFaceFromLightbox() {
+  if (!currentEventInModal) return;
+  const nameInput = document.getElementById("lightboxFaceName");
+  const name = nameInput ? nameInput.value.trim() : "";
+  if (!name) {
+    showToast("⚠️ Please enter a person's name (e.g. Nick)");
+    return;
+  }
+
+  showToast(`⏳ Detecting and enrolling face for "${name}"...`);
+
+  try {
+    const srcImg = currentEventInModal.image_path || currentEventInModal.annotated_path;
+    const res = await fetch("/api/faces/enroll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: name,
+        image_path: srcImg
+      })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(`⚠️ ${data.detail || 'Enrollment failed'}`);
+      return;
+    }
+
+    showToast(`👤 Enrolled "${data.face.name}" successfully! Future visits will recognize them.`);
+    if (nameInput) nameInput.value = "";
+    loadEvents();
+  } catch (err) {
+    console.error("Enrollment error", err);
+    showToast("⚠️ Face enrollment failed");
+  }
 }
 
 function deleteCurrentLightboxEvent() {
@@ -847,8 +971,29 @@ function toggleFullscreen() {
 }
 
 // ============================================================
-// SETTINGS MODAL
+// SETTINGS MODAL & AI RECOGNITION
 // ============================================================
+
+function switchSettingsTab(tab) {
+  const btnGeneral = document.getElementById("tabSetGeneral");
+  const btnAI = document.getElementById("tabSetAI");
+  const panelGeneral = document.getElementById("panelSetGeneral");
+  const panelAI = document.getElementById("panelSetAI");
+
+  if (tab === "general") {
+    btnGeneral?.classList.add("active");
+    btnAI?.classList.remove("active");
+    if (panelGeneral) panelGeneral.style.display = "block";
+    if (panelAI) panelAI.style.display = "none";
+  } else {
+    btnAI?.classList.add("active");
+    btnGeneral?.classList.remove("active");
+    if (panelGeneral) panelGeneral.style.display = "none";
+    if (panelAI) panelAI.style.display = "block";
+    loadAISettings();
+    loadEnrolledFaces();
+  }
+}
 
 async function openSettings() {
   try {
@@ -871,9 +1016,46 @@ async function openSettings() {
     document.getElementById("cfgMotionEnabled").checked = s.motion_enabled;
     document.getElementById("cfgSoundEnabled").checked = soundAlertsEnabled;
 
+    loadAISettings();
+    loadEnrolledFaces();
+
     document.getElementById("settingsModal").classList.add("open");
   } catch (e) {
     console.error("Open settings error", e);
+  }
+}
+
+async function loadAISettings() {
+  try {
+    const res = await fetch("/api/settings/ai");
+    const ai = await res.json();
+
+    const objToggle = document.getElementById("cfgAiObjects");
+    if (objToggle) objToggle.checked = ai.objects_enabled;
+
+    const faceToggle = document.getElementById("cfgAiFaces");
+    if (faceToggle) faceToggle.checked = ai.faces_enabled;
+
+    const objConfSlider = document.getElementById("cfgAiObjConf");
+    const objConfVal = document.getElementById("valAiObjConf");
+    if (objConfSlider) {
+      const pct = Math.round(ai.object_confidence * 100);
+      objConfSlider.value = pct;
+      if (objConfVal) objConfVal.innerText = `${pct}%`;
+    }
+
+    const faceThreshSlider = document.getElementById("cfgAiFaceThresh");
+    const faceThreshVal = document.getElementById("valAiFaceThresh");
+    if (faceThreshSlider) {
+      const pct = Math.round(ai.face_match_threshold * 100);
+      faceThreshSlider.value = pct;
+      if (faceThreshVal) faceThreshVal.innerText = `${pct}%`;
+    }
+
+    const countElem = document.getElementById("enrolledFacesCount");
+    if (countElem) countElem.innerText = ai.enrolled_faces_count;
+  } catch (e) {
+    console.error("Load AI settings error", e);
   }
 }
 
@@ -890,17 +1072,148 @@ async function saveSettings() {
 
   soundAlertsEnabled = document.getElementById("cfgSoundEnabled").checked;
 
+  const aiPayload = {
+    objects_enabled: document.getElementById("cfgAiObjects")?.checked,
+    faces_enabled: document.getElementById("cfgAiFaces")?.checked,
+    object_confidence: parseInt(document.getElementById("cfgAiObjConf")?.value || "45") / 100.0,
+    face_match_threshold: parseInt(document.getElementById("cfgAiFaceThresh")?.value || "36") / 100.0
+  };
+
   try {
     await fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
+
+    await fetch("/api/settings/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(aiPayload)
+    });
+
     closeModal("settingsModal");
     fetchTelemetry();
     showToast("Settings saved");
   } catch (e) {
     console.error("Save settings failed", e);
+  }
+}
+
+// Enrolled Faces Management
+async function loadEnrolledFaces() {
+  const grid = document.getElementById("facesGrid");
+  const countBadge = document.getElementById("enrolledFacesCount");
+  if (!grid) return;
+
+  try {
+    const res = await fetch("/api/faces");
+    const data = await res.json();
+    const faces = data.faces || [];
+    if (countBadge) countBadge.innerText = faces.length;
+
+    if (faces.length === 0) {
+      grid.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1; padding: 15px;">No known faces enrolled yet. Add family members below or name someone from any captured event.</div>`;
+      return;
+    }
+
+    grid.innerHTML = "";
+    faces.forEach(f => {
+      const card = document.createElement("div");
+      card.className = "face-card";
+      const dt = new Date(f.created_at * 1000).toLocaleDateString();
+      card.innerHTML = `
+        <button class="face-delete-btn" title="Delete face" onclick="deleteEnrolledFace(${f.id})">✕</button>
+        <img src="/${f.thumbnail_path}" class="face-thumb" alt="${f.name}" onerror="this.src='/static/icon-192.png'" />
+        <div class="face-name" title="${f.name}">${f.name}</div>
+        <div class="face-date">${dt}</div>
+      `;
+      grid.appendChild(card);
+    });
+  } catch (e) {
+    console.error("Failed to load enrolled faces", e);
+  }
+}
+
+async function deleteEnrolledFace(id) {
+  if (confirm("Delete this enrolled face? The system will no longer recognize this person.")) {
+    try {
+      await fetch(`/api/faces/${id}`, { method: "DELETE" });
+      showToast("Face deleted");
+      loadEnrolledFaces();
+    } catch (e) {
+      console.error("Delete face error", e);
+    }
+  }
+}
+
+async function enrollFromLiveView() {
+  const nameInput = document.getElementById("newFaceName");
+  const name = nameInput ? nameInput.value.trim() : "";
+  if (!name) {
+    showToast("⚠️ Enter person's name first (e.g. Nick)");
+    return;
+  }
+
+  showToast(`📸 Capturing live camera frame for "${name}"...`);
+  try {
+    const res = await fetch("/api/faces/enroll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name, from_live: true })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(`⚠️ ${data.detail || 'No face found in live camera frame'}`);
+      return;
+    }
+    showToast(`✅ "${data.face.name}" successfully enrolled from live camera!`);
+    if (nameInput) nameInput.value = "";
+    loadEnrolledFaces();
+  } catch (e) {
+    console.error("Live enroll error", e);
+    showToast("⚠️ Error enrolling from live camera");
+  }
+}
+
+async function uploadFacePhoto(evt) {
+  const file = evt.target.files && evt.target.files[0];
+  if (!file) return;
+
+  const nameInput = document.getElementById("newFaceName");
+  let name = nameInput ? nameInput.value.trim() : "";
+  if (!name) {
+    name = prompt("Enter this person's name (e.g. Nick, Sarah):");
+    if (!name || !name.trim()) {
+      evt.target.value = "";
+      return;
+    }
+    name = name.trim();
+  }
+
+  showToast(`📁 Uploading and scanning photo for "${name}"...`);
+  const formData = new FormData();
+  formData.append("name", name);
+  formData.append("file", file);
+
+  try {
+    const res = await fetch("/api/faces/upload", {
+      method: "POST",
+      body: formData
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(`⚠️ ${data.detail || 'Face enrollment failed'}`);
+      evt.target.value = "";
+      return;
+    }
+    showToast(`✅ "${data.face.name}" successfully enrolled!`);
+    evt.target.value = "";
+    if (nameInput) nameInput.value = "";
+    loadEnrolledFaces();
+  } catch (e) {
+    console.error("Upload enroll error", e);
+    showToast("⚠️ Upload failed");
   }
 }
 
@@ -940,6 +1253,13 @@ window.addEventListener("DOMContentLoaded", () => {
 
   const cool = document.getElementById("cfgCooldown");
   if (cool) cool.oninput = (e) => document.getElementById("valCooldown").innerText = `${e.target.value}s`;
+
+  // AI slider listeners
+  const aiObj = document.getElementById("cfgAiObjConf");
+  if (aiObj) aiObj.oninput = (e) => document.getElementById("valAiObjConf").innerText = `${e.target.value}%`;
+
+  const aiFace = document.getElementById("cfgAiFaceThresh");
+  if (aiFace) aiFace.oninput = (e) => document.getElementById("valAiFaceThresh").innerText = `${e.target.value}%`;
 
   // First touch / tap unlocks Web Audio & prompts notification
   document.body.addEventListener("click", () => {

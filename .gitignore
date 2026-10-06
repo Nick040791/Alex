@@ -2,4 +2,6 @@ __pycache__/
 *.pyc
 events.db
 captures/*.jpg
+captures/faces/*.jpg
+test_venv/
 .DS_Store

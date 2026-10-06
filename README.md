@@ -32,6 +32,18 @@ A full-featured Ring-like security camera system powered by an Android tablet ru
   - Lightbox modal to inspect full-resolution photos, download, or delete.
   - Persistent SQLite storage (`events.db`).
 - **Instant Alerts**: WebSockets sync motion status, chimes, and viewer count across all open browser tabs.
+- **AI Object Recognition (YOLOv8)**:
+  - Real-time classification for 80 COCO categories (People, Cars, Trucks, Motorcycles, Bicycles, Dogs, Cats, Birds, Packages, Bags).
+  - Smart labeled bounding boxes with confidence scores.
+- **Facial Detection & Recognition (YuNet + SFace)**:
+  - High-speed YuNet face landmark detection.
+  - SFace 128-D cosine embedding face matcher.
+  - Name and enroll known people directly from any event snapshot or live stream.
+  - Automatically identifies family members and visitors (e.g. `👤 Nick`).
+- **PWA & Mobile Push Notifications**:
+  - Installable Progressive Web App with service worker background support.
+  - Native browser & mobile device push notifications with vibration patterns.
+  - Rich notifications identifying specific detected persons or objects (e.g. `⚠️ Ring Cam: 👤 Nick + 🚗 Vehicle`).
 
 ## Quick Start
 
@@ -44,7 +56,11 @@ A full-featured Ring-like security camera system powered by an Android tablet ru
 2. **Access the Dashboard**:
    - From any Tailscale device: Open `http://100.79.108.38:8088` (or `http://serverdeskhq:8088`).
 
-3. **To Run as a Background System Service**:
+3. **Face Enrollment**:
+   - **From Captured Events**: Open any event in the Activity Feed and type a name under "Name This Face" -> Click **👤 Enroll Face**.
+   - **From Live View or Photo Upload**: Go to **Settings (⚙️) -> 👤 AI & Known Faces** -> Click **📸 Capture from Live View** or **📁 Upload Photo**.
+
+4. **To Run as a Background System Service**:
    ```bash
    sudo cp /home/mrnicholas/Dev/Alex/ring-cam.service /etc/systemd/system/
    sudo systemctl daemon-reload

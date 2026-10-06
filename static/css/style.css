@@ -1300,3 +1300,224 @@ body {
     padding: 6px 2px;
   }
 }
+
+/* ============================================================
+   AI VISION & FACIAL RECOGNITION STYLES
+   ============================================================ */
+
+/* AI Recognition Badges in Activity Feed */
+.activity-badge.ai-known-face {
+  background-color: rgba(217, 70, 239, 0.2);
+  color: #f0abfc;
+  border: 1px solid rgba(217, 70, 239, 0.45);
+  box-shadow: 0 0 8px rgba(217, 70, 239, 0.25);
+  font-weight: 700;
+}
+
+.activity-badge.ai-person {
+  background-color: rgba(14, 165, 233, 0.2);
+  color: #7dd3fc;
+  border: 1px solid rgba(14, 165, 233, 0.4);
+}
+
+.activity-badge.ai-vehicle {
+  background-color: rgba(245, 158, 11, 0.2);
+  color: #fcd34d;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.activity-badge.ai-pet {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.activity-badge.ai-package {
+  background-color: rgba(168, 85, 247, 0.2);
+  color: #d8b4fe;
+  border: 1px solid rgba(168, 85, 247, 0.4);
+}
+
+.activity-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* Lightbox AI & Face Enrollment Card */
+.lightbox-ai-section {
+  background: #0f172a;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lightbox-ai-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.lightbox-enroll-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.lightbox-enroll-input {
+  flex: 1;
+  background: #1e293b;
+  border: 1px solid var(--border-color);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.84rem;
+}
+
+.lightbox-enroll-input:focus {
+  outline: none;
+  border-color: #d946ef;
+  box-shadow: 0 0 0 2px rgba(217, 70, 239, 0.3);
+}
+
+.btn-enroll-face {
+  background: linear-gradient(135deg, #a855f7, #d946ef);
+  color: #fff;
+  border: none;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.btn-enroll-face:hover {
+  box-shadow: 0 0 12px rgba(217, 70, 239, 0.5);
+  transform: translateY(-1px);
+}
+
+/* Settings Tabs */
+.settings-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+.settings-tab-btn {
+  background: #1e293b;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 7px 14px;
+  border-radius: var(--radius-md);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.settings-tab-btn:hover {
+  color: #fff;
+  border-color: var(--text-muted);
+}
+
+.settings-tab-btn.active {
+  background: rgba(0, 168, 255, 0.2);
+  border-color: var(--ring-blue);
+  color: var(--ring-blue);
+}
+
+/* Enrolled Faces Grid in Settings */
+.faces-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.face-card {
+  background: #0f172a;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  position: relative;
+  transition: all 0.2s;
+}
+
+.face-card:hover {
+  border-color: #d946ef;
+  transform: translateY(-2px);
+}
+
+.face-thumb {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #d946ef;
+  box-shadow: 0 0 10px rgba(217, 70, 239, 0.35);
+  margin-bottom: 8px;
+  background: #000;
+}
+
+.face-name {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #fff;
+  max-width: 110px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.face-date {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.face-delete-btn {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: var(--ring-alert);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 0.7rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.face-delete-btn:hover {
+  background: var(--ring-alert);
+  color: #fff;
+}
+

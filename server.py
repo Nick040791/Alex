@@ -7,7 +7,7 @@ import numpy as np
 from contextlib import asynccontextmanager
 from typing import Set, Dict, Any, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException, Request, File, UploadFile, Form
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -15,21 +15,35 @@ from pydantic import BaseModel
 import database
 from camera_client import CameraClient
 from motion import MotionDetector
+from ai_vision import AIVisionEngine
 
 # Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 CAPTURES_DIR = os.path.join(BASE_DIR, "captures")
+MODELS_DIR = os.path.join(BASE_DIR, "models")
+FACES_DIR = os.path.join(CAPTURES_DIR, "faces")
 os.makedirs(CAPTURES_DIR, exist_ok=True)
+os.makedirs(FACES_DIR, exist_ok=True)
 
 # Initialize DB
 database.init_db()
+
+# AI Vision Engine
+ai_vision = AIVisionEngine(MODELS_DIR)
+ai_vision.update_config(
+    objects_enabled=database.get_setting("ai_objects_enabled", "true").lower() == "true",
+    faces_enabled=database.get_setting("ai_faces_enabled", "true").lower() == "true",
+    object_confidence=float(database.get_setting("ai_object_confidence", "0.45")),
+    face_confidence=float(database.get_setting("ai_face_confidence", "0.60")),
+    face_match_threshold=float(database.get_setting("ai_face_match_threshold", "0.363"))
+)
 
 # Load default or saved settings
 default_host = database.get_setting("tablet_host", "100.105.4.70")
 default_http_port = int(database.get_setting("tablet_http_port", "8080"))
 default_rtsp_port = int(database.get_setting("tablet_rtsp_port", "8554"))
-default_sensitivity = int(database.get_setting("motion_sensitivity", "25"))
+default_sensitivity = int(database.get_setting("motion_sensitivity", "60"))
 default_min_area = int(database.get_setting("motion_min_area", "1800"))
 default_cooldown = float(database.get_setting("motion_cooldown", "6.0"))
 default_motion_enabled = database.get_setting("motion_enabled", "true").lower() == "true"
@@ -65,17 +79,23 @@ async def broadcast_ws(message: Dict[str, Any]):
         active_websockets.discard(ws)
 
 async def motion_worker_loop():
-    """Background coroutine analyzing camera frames for motion events"""
+    """Background coroutine analyzing camera frames for motion and AI recognition"""
     global latest_annotated_jpeg
     last_broadcast_time = 0.0
     last_motion_state = False
+    ai_frame_counter = 0
 
     while True:
         try:
             frame, raw_jpeg, is_connected = camera_client.get_latest_frame()
             if frame is not None:
                 motion_detected, is_new_event, annotated_frame, motion_score, trigger_thresh, boxes = motion_detector.process_frame(frame)
-                
+                ai_frame_counter += 1
+
+                # Periodically or on motion, run AI detection for the live view overlay
+                if is_connected and (motion_detected or ai_frame_counter % 3 == 0):
+                    annotated_frame, live_objects, live_faces, live_summary = ai_vision.process_and_annotate(annotated_frame, draw_ai=True)
+
                 # Encode annotated frame for the overlay stream
                 ret, ann_bytes = cv2.imencode('.jpg', annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                 if ret:
@@ -83,7 +103,7 @@ async def motion_worker_loop():
 
                 now = time.time()
 
-                # Trigger new Ring motion event
+                # Trigger new Ring motion event with AI Recognition
                 if is_new_event and is_connected:
                     timestamp_int = int(now)
                     clean_filename = f"motion_{timestamp_int}_clean.jpg"
@@ -91,21 +111,27 @@ async def motion_worker_loop():
                     clean_path = os.path.join(CAPTURES_DIR, clean_filename)
                     ann_path = os.path.join(CAPTURES_DIR, ann_filename)
 
+                    # Run deep AI recognition on event snapshot
+                    ai_ann_frame, event_objects, event_faces, event_summary = ai_vision.process_and_annotate(frame.copy(), draw_ai=True)
+
                     # Save frames to disk
                     cv2.imwrite(clean_path, frame)
-                    cv2.imwrite(ann_path, annotated_frame)
+                    cv2.imwrite(ann_path, ai_ann_frame)
 
-                    # Store event in SQLite
+                    # Store event in SQLite with AI objects and faces
                     event_record = database.add_event(
                         event_type="motion",
                         image_path=f"captures/{clean_filename}",
                         annotated_path=f"captures/{ann_filename}",
                         motion_score=motion_score,
                         boxes=boxes,
-                        notes="Ring Motion Alert"
+                        notes=f"AI: {event_summary}",
+                        objects=event_objects,
+                        faces=event_faces,
+                        summary_label=event_summary
                     )
 
-                    # Broadcast instant alert to dashboards
+                    # Broadcast instant alert to dashboards & mobile devices
                     await broadcast_ws({
                         "type": "motion_event",
                         "event": event_record
@@ -158,6 +184,18 @@ class SettingsUpdate(BaseModel):
     motion_cooldown: Optional[float] = None
     motion_zone: Optional[str] = None
     motion_enabled: Optional[bool] = None
+
+class AISettingsUpdate(BaseModel):
+    objects_enabled: Optional[bool] = None
+    faces_enabled: Optional[bool] = None
+    object_confidence: Optional[float] = None
+    face_confidence: Optional[float] = None
+    face_match_threshold: Optional[float] = None
+
+class FaceEnrollRequest(BaseModel):
+    name: str
+    image_path: Optional[str] = None
+    from_live: Optional[bool] = False
 
 class ControlParam(BaseModel):
     value: Optional[str] = None
@@ -266,6 +304,14 @@ async def get_status():
             "trigger_threshold": motion_detector.trigger_threshold,
             "is_active": motion_detector.is_motion_active,
             "score": motion_detector.motion_score
+        },
+        "ai": {
+            "objects_enabled": ai_vision.objects_enabled,
+            "faces_enabled": ai_vision.faces_enabled,
+            "object_confidence": ai_vision.object_confidence,
+            "face_confidence": ai_vision.face_confidence,
+            "face_match_threshold": ai_vision.face_match_threshold,
+            "enrolled_faces_count": len(ai_vision.known_faces)
         },
         "active_viewers": len(active_websockets)
     }
@@ -383,6 +429,169 @@ async def update_settings(payload: SettingsUpdate):
         "sensitivity": motion_detector.sensitivity,
         "zone": motion_detector.zone,
         "trigger_threshold": motion_detector.trigger_threshold
+    }
+
+# Facial & Object Recognition AI API
+@app.get("/api/faces")
+async def list_faces():
+    """List all enrolled faces"""
+    faces = database.get_known_faces()
+    cleaned = [
+        {
+            "id": f["id"],
+            "name": f["name"],
+            "thumbnail_path": f["thumbnail_path"],
+            "created_at": f["created_at"]
+        }
+        for f in faces
+    ]
+    return {"faces": cleaned}
+
+@app.post("/api/faces/enroll")
+async def enroll_face(req: FaceEnrollRequest):
+    """Enroll a face from an existing capture or the live stream"""
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+
+    frame = None
+    if req.from_live:
+        frame, _, _ = camera_client.get_latest_frame()
+        if frame is None:
+            raise HTTPException(status_code=503, detail="Camera live frame unavailable")
+    elif req.image_path:
+        rel_p = req.image_path.lstrip("/")
+        full_p = os.path.join(BASE_DIR, rel_p)
+        if not os.path.exists(full_p):
+            raise HTTPException(status_code=404, detail="Source image file not found")
+        frame = cv2.imread(full_p)
+    else:
+        raise HTTPException(status_code=400, detail="Must provide image_path or from_live=true")
+
+    if frame is None:
+        raise HTTPException(status_code=400, detail="Failed to load image for face enrollment")
+
+    timestamp_int = int(time.time())
+    safe_name = "".join(c for c in name.lower() if c.isalnum() or c in ('_', '-')).strip() or "face"
+    thumb_filename = f"face_{timestamp_int}_{safe_name}.jpg"
+    thumb_disk_path = os.path.join(FACES_DIR, thumb_filename)
+    thumb_rel_path = f"captures/faces/{thumb_filename}"
+
+    face_id = ai_vision.enroll_face_from_crop(name, frame, thumb_disk_path, thumb_rel_path)
+    if face_id is None:
+        raise HTTPException(status_code=422, detail="No face detected in the image. Please use an image with a clearly visible face.")
+
+    face_record = {
+        "id": face_id,
+        "name": name,
+        "thumbnail_path": thumb_rel_path,
+        "created_at": timestamp_int
+    }
+
+    await broadcast_ws({
+        "type": "face_enrolled",
+        "face": face_record
+    })
+
+    return {"success": True, "face": face_record}
+
+@app.post("/api/faces/upload")
+async def enroll_face_upload(name: str = Form(...), file: UploadFile = File(...)):
+    """Enroll a face by uploading an image from the user's device"""
+    name = (name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+
+    contents = await file.read()
+    nparr = np.frombuffer(contents, np.uint8)
+    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if frame is None:
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid image")
+
+    timestamp_int = int(time.time())
+    safe_name = "".join(c for c in name.lower() if c.isalnum() or c in ('_', '-')).strip() or "face"
+    thumb_filename = f"face_{timestamp_int}_{safe_name}.jpg"
+    thumb_disk_path = os.path.join(FACES_DIR, thumb_filename)
+    thumb_rel_path = f"captures/faces/{thumb_filename}"
+
+    face_id = ai_vision.enroll_face_from_crop(name, frame, thumb_disk_path, thumb_rel_path)
+    if face_id is None:
+        raise HTTPException(status_code=422, detail="No face detected in the uploaded photo. Please choose a clearer picture.")
+
+    face_record = {
+        "id": face_id,
+        "name": name,
+        "thumbnail_path": thumb_rel_path,
+        "created_at": timestamp_int
+    }
+
+    await broadcast_ws({
+        "type": "face_enrolled",
+        "face": face_record
+    })
+
+    return {"success": True, "face": face_record}
+
+@app.delete("/api/faces/{face_id}")
+async def remove_face(face_id: int):
+    """Delete an enrolled face"""
+    success = database.delete_known_face(face_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Enrolled face not found")
+    ai_vision.reload_known_faces()
+    await broadcast_ws({"type": "face_deleted", "id": face_id})
+    return {"success": True}
+
+@app.get("/api/settings/ai")
+async def get_ai_settings():
+    """Get AI Vision Engine configuration"""
+    return {
+        "objects_enabled": ai_vision.objects_enabled,
+        "faces_enabled": ai_vision.faces_enabled,
+        "object_confidence": ai_vision.object_confidence,
+        "face_confidence": ai_vision.face_confidence,
+        "face_match_threshold": ai_vision.face_match_threshold,
+        "enrolled_faces_count": len(ai_vision.known_faces)
+    }
+
+@app.post("/api/settings/ai")
+async def update_ai_settings(payload: AISettingsUpdate):
+    """Update AI Vision Engine configuration"""
+    if payload.objects_enabled is not None:
+        database.set_setting("ai_objects_enabled", str(payload.objects_enabled).lower())
+    if payload.faces_enabled is not None:
+        database.set_setting("ai_faces_enabled", str(payload.faces_enabled).lower())
+    if payload.object_confidence is not None:
+        database.set_setting("ai_object_confidence", str(payload.object_confidence))
+    if payload.face_confidence is not None:
+        database.set_setting("ai_face_confidence", str(payload.face_confidence))
+    if payload.face_match_threshold is not None:
+        database.set_setting("ai_face_match_threshold", str(payload.face_match_threshold))
+
+    ai_vision.update_config(
+        objects_enabled=payload.objects_enabled,
+        faces_enabled=payload.faces_enabled,
+        object_confidence=payload.object_confidence,
+        face_confidence=payload.face_confidence,
+        face_match_threshold=payload.face_match_threshold
+    )
+
+    await broadcast_ws({
+        "type": "ai_settings_updated",
+        "objects_enabled": ai_vision.objects_enabled,
+        "faces_enabled": ai_vision.faces_enabled,
+        "object_confidence": ai_vision.object_confidence,
+        "face_confidence": ai_vision.face_confidence,
+        "face_match_threshold": ai_vision.face_match_threshold
+    })
+
+    return {
+        "success": True,
+        "objects_enabled": ai_vision.objects_enabled,
+        "faces_enabled": ai_vision.faces_enabled,
+        "object_confidence": ai_vision.object_confidence,
+        "face_confidence": ai_vision.face_confidence,
+        "face_match_threshold": ai_vision.face_match_threshold
     }
 
 # WebSockets for live dashboard updates

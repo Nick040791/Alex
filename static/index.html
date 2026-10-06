@@ -275,6 +275,23 @@
         <div class="lightbox-img-wrapper">
           <img id="lightboxImg" src="" alt="Capture Preview" />
         </div>
+
+        <!-- AI Recognition & Face Enrollment Card -->
+        <div class="lightbox-ai-section" id="lightboxAiSection">
+          <div class="lightbox-ai-header">
+            <span>🤖 AI Detection: <strong id="lightboxAiSummary" style="color: #fff;">None</strong></span>
+            <span id="lightboxAiCount" style="font-size: 0.75rem; color: var(--text-muted);"></span>
+          </div>
+          <div id="lightboxAiDetails" style="font-size: 0.8rem; color: var(--text-secondary);"></div>
+          
+          <div class="lightbox-enroll-bar" id="lightboxEnrollBar">
+            <input type="text" id="lightboxFaceName" class="lightbox-enroll-input" placeholder="Name this face (e.g. Nick, Sarah)" />
+            <button type="button" class="btn-enroll-face" onclick="enrollFaceFromLightbox()">
+              👤 Enroll Face
+            </button>
+          </div>
+        </div>
+
         <div class="lightbox-footer">
           <div class="lightbox-meta">
             <div id="lightboxTime" style="font-weight: 600; color: #fff;"></div>
@@ -293,82 +310,155 @@
     </div>
   </div>
 
-  <!-- Settings Modal -->
+  <!-- Settings Modal with Tabs -->
   <div class="modal-overlay" id="settingsModal" onclick="if(event.target === this) closeModal('settingsModal')">
     <div class="modal-card">
       <div class="modal-header">
-        <h3>Camera & Motion Settings</h3>
+        <h3>Ring Settings</h3>
         <button class="modal-close" onclick="closeModal('settingsModal')">&times;</button>
       </div>
       <div class="modal-body">
         
-        <div class="form-group">
-          <label class="form-label">
-            <span>Tablet Tailscale Host / IP</span>
-          </label>
-          <input type="text" id="cfgTabletHost" class="form-input" value="100.105.4.70" />
+        <!-- Settings Tabs -->
+        <div class="settings-tabs">
+          <button type="button" class="settings-tab-btn active" id="tabSetGeneral" onclick="switchSettingsTab('general')">
+            ⚙️ Camera & Motion
+          </button>
+          <button type="button" class="settings-tab-btn" id="tabSetAI" onclick="switchSettingsTab('ai')">
+            👤 AI & Known Faces
+          </button>
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+        <!-- Tab 1: General Camera & Motion -->
+        <div id="panelSetGeneral">
           <div class="form-group">
             <label class="form-label">
-              <span>HTTP Port (IP Cam API)</span>
+              <span>Tablet Tailscale Host / IP</span>
             </label>
-            <input type="number" id="cfgTabletHttpPort" class="form-input" value="8080" />
+            <input type="text" id="cfgTabletHost" class="form-input" value="100.105.4.70" />
           </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+            <div class="form-group">
+              <label class="form-label">
+                <span>HTTP Port (IP Cam API)</span>
+              </label>
+              <input type="number" id="cfgTabletHttpPort" class="form-input" value="8080" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">
+                <span>RTSP Port</span>
+              </label>
+              <input type="number" id="cfgTabletRtspPort" class="form-input" value="8554" />
+            </div>
+          </div>
+
+          <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 16px 0;" />
+
           <div class="form-group">
             <label class="form-label">
-              <span>RTSP Port</span>
+              <span>Motion Sensitivity</span>
+              <span id="valSensitivity" style="color: var(--ring-blue);">60</span>
             </label>
-            <input type="number" id="cfgTabletRtspPort" class="form-input" value="8554" />
+            <input type="range" id="cfgSensitivity" class="range-slider" min="5" max="95" value="60" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">
+              <span>Minimum Motion Area</span>
+              <span id="valMinArea" style="color: var(--ring-blue);">1200 px</span>
+            </label>
+            <input type="range" id="cfgMinArea" class="range-slider" min="300" max="10000" step="100" value="1200" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">
+              <span>Event Cooldown</span>
+              <span id="valCooldown" style="color: var(--ring-blue);">6s</span>
+            </label>
+            <input type="range" id="cfgCooldown" class="range-slider" min="2" max="30" step="1" value="6" />
+          </div>
+
+          <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 16px 0;" />
+
+          <label class="checkbox-group">
+            <input type="checkbox" id="cfgMotionEnabled" checked style="accent-color: var(--ring-blue); width: 18px; height: 18px;" />
+            <span style="font-size: 0.9rem; font-weight: 600;">Enable Motion Detection & Image Recording</span>
+          </label>
+
+          <label class="checkbox-group">
+            <input type="checkbox" id="cfgSoundEnabled" checked style="accent-color: var(--ring-blue); width: 18px; height: 18px;" />
+            <span style="font-size: 0.9rem; font-weight: 600;">Play Ring Chime On Motion Alerts</span>
+          </label>
+
+          <div style="margin-top: 18px;">
+            <button type="button" class="btn-primary" style="width: 100%; margin-bottom: 10px;" onclick="toggleNotifications()">
+              🔔 Toggle Device Push Notifications
+            </button>
+            <button type="button" class="btn-secondary" style="width: 100%;" onclick="resetCameraService()">
+              ⚠️ Reset Tablet Camera Service
+            </button>
           </div>
         </div>
 
-        <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 16px 0;" />
-
-        <div class="form-group">
-          <label class="form-label">
-            <span>Motion Sensitivity</span>
-            <span id="valSensitivity" style="color: var(--ring-blue);">60</span>
+        <!-- Tab 2: AI & Facial Recognition -->
+        <div id="panelSetAI" style="display: none;">
+          <label class="checkbox-group">
+            <input type="checkbox" id="cfgAiObjects" checked style="accent-color: #00a8ff; width: 18px; height: 18px;" />
+            <span style="font-size: 0.9rem; font-weight: 600;">YOLOv8 Object Recognition (Person, Vehicle, Pet, Package)</span>
           </label>
-          <input type="range" id="cfgSensitivity" class="range-slider" min="5" max="95" value="60" />
-        </div>
 
-        <div class="form-group">
-          <label class="form-label">
-            <span>Minimum Motion Area</span>
-            <span id="valMinArea" style="color: var(--ring-blue);">1200 px</span>
+          <label class="checkbox-group">
+            <input type="checkbox" id="cfgAiFaces" checked style="accent-color: #d946ef; width: 18px; height: 18px;" />
+            <span style="font-size: 0.9rem; font-weight: 600;">YuNet + SFace Facial Identification</span>
           </label>
-          <input type="range" id="cfgMinArea" class="range-slider" min="300" max="10000" step="100" value="1200" />
-        </div>
 
-        <div class="form-group">
-          <label class="form-label">
-            <span>Event Cooldown</span>
-            <span id="valCooldown" style="color: var(--ring-blue);">6s</span>
-          </label>
-          <input type="range" id="cfgCooldown" class="range-slider" min="2" max="30" step="1" value="6" />
-        </div>
+          <div class="form-group" style="margin-top: 12px;">
+            <label class="form-label">
+              <span>Object Confidence Threshold</span>
+              <span id="valAiObjConf" style="color: var(--ring-blue);">45%</span>
+            </label>
+            <input type="range" id="cfgAiObjConf" class="range-slider" min="15" max="85" value="45" />
+          </div>
 
-        <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 16px 0;" />
+          <div class="form-group">
+            <label class="form-label">
+              <span>Face Match Strictness (Cosine Similarity)</span>
+              <span id="valAiFaceThresh" style="color: #d946ef;">36%</span>
+            </label>
+            <input type="range" id="cfgAiFaceThresh" class="range-slider" min="20" max="70" value="36" />
+          </div>
 
-        <label class="checkbox-group">
-          <input type="checkbox" id="cfgMotionEnabled" checked style="accent-color: var(--ring-blue); width: 18px; height: 18px;" />
-          <span style="font-size: 0.9rem; font-weight: 600;">Enable Motion Detection & Image Recording</span>
-        </label>
+          <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 16px 0;" />
 
-        <label class="checkbox-group">
-          <input type="checkbox" id="cfgSoundEnabled" checked style="accent-color: var(--ring-blue); width: 18px; height: 18px;" />
-          <span style="font-size: 0.9rem; font-weight: 600;">Play Ring Chime On Motion Alerts</span>
-        </label>
+          <!-- Enrolled Faces Subsection -->
+          <div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <h4 style="font-size: 0.9rem; font-weight: 700;">Enrolled People (<span id="enrolledFacesCount">0</span>)</h4>
+              <button type="button" class="btn-small" onclick="loadEnrolledFaces()">🔄 Refresh</button>
+            </div>
+            
+            <div class="faces-grid" id="facesGrid">
+              <div class="empty-state" style="grid-column: 1 / -1; padding: 15px;">No known faces enrolled yet. Add family members below or name someone from any captured event.</div>
+            </div>
 
-        <div style="margin-top: 18px;">
-          <button type="button" class="btn-primary" style="width: 100%; margin-bottom: 10px;" onclick="toggleNotifications()">
-            🔔 Toggle Device Push Notifications
-          </button>
-          <button type="button" class="btn-secondary" style="width: 100%;" onclick="resetCameraService()">
-            ⚠️ Reset Tablet Camera Service
-          </button>
+            <!-- Enroll New Person Form -->
+            <div style="background: #0f172a; border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px; margin-top: 14px;">
+              <div style="font-size: 0.84rem; font-weight: 700; margin-bottom: 8px; color: #fff;">+ Enroll New Person</div>
+              <div class="form-group" style="margin-bottom: 10px;">
+                <input type="text" id="newFaceName" class="form-input" placeholder="Person's Full Name (e.g. Nick, Mom)" />
+              </div>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <button type="button" class="btn-primary" style="flex: 1; min-width: 140px;" onclick="enrollFromLiveView()">
+                  📸 Capture from Live View
+                </button>
+                <label class="btn-secondary" style="flex: 1; min-width: 140px; text-align: center; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                  📁 Upload Photo
+                  <input type="file" id="faceUploadInput" accept="image/*" style="display: none;" onchange="uploadFacePhoto(event)" />
+                </label>
+              </div>
+            </div>
+          </div>
         </div>
 
       </div>
